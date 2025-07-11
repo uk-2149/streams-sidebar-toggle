@@ -43,6 +43,7 @@ import * as user_topics from "./user_topics.ts";
 
 let pending_stream_list_rerender = false;
 let zoomed_in = false;
+let prevent_auto_expand = false;
 let update_inbox_channel_view_callback: (channel_id: number) => void;
 
 export function set_update_inbox_channel_view_callback(value: (channel_id: number) => void): void {
@@ -724,6 +725,38 @@ function deselect_stream_items(): void {
     $("ul#stream_filters li").removeClass("active-filter stream-expanded");
 }
 
+const streamClickState = new Map<number, "first" | "expanded" | "collapsed">();
+
+function handle_stream_sidebar_click(
+    stream_id: number,
+    on_stream_click: (stream_id: number, trigger: string) => void,
+): void {
+    const current_state = streamClickState.get(stream_id) ?? "first";
+    // const current_narrow_stream_id = narrow_state.stream_id();
+    // const current_topic = narrow_state.topic();
+
+    if (current_state === "first") {
+        prevent_auto_expand = true;
+        on_stream_click(stream_id, "sidebar");
+        const $stream_li = get_stream_li(stream_id);
+        if ($stream_li) {
+            $stream_li.addClass("active-filter");
+        }
+
+        streamClickState.set(stream_id, "expanded");
+    } else if (current_state === "expanded") {
+        const $stream_li = get_stream_li(stream_id);
+        if ($stream_li) {
+            $stream_li.addClass("stream-expanded");
+            topic_list.rebuild_left_sidebar($stream_li, stream_id);
+        }
+        streamClickState.set(stream_id, "collapsed");
+    } else {
+        topic_list.clear();
+        streamClickState.set(stream_id, "expanded");
+    }
+}
+
 export function update_stream_sidebar_for_narrow(filter: Filter): JQuery | undefined {
     const info = get_sidebar_stream_topic_info(filter);
 
@@ -740,7 +773,7 @@ export function update_stream_sidebar_for_narrow(filter: Filter): JQuery | undef
 
     if (!$stream_li) {
         // This is a sanity check.  When we narrow to a subscribed
-        // stream, there will always be a stream list item
+        // stream, there will always be a stream list itemß
         // corresponding to that stream in our sidebar.  This error
         // stopped appearing from March 2018 until at least
         // April 2020, so if it appears again, something regressed.
@@ -765,7 +798,9 @@ export function update_stream_sidebar_for_narrow(filter: Filter): JQuery | undef
     // We want to update channel view for inbox for the same reasons
     // we want to the topics list here.
     update_inbox_channel_view_callback(stream_id);
-    topic_list.rebuild_left_sidebar($stream_li, stream_id);
+    if (!prevent_auto_expand) {
+        topic_list.rebuild_left_sidebar($stream_li, stream_id);
+    }
     topic_list.topic_state_typeahead?.lookup(true);
     return $stream_li;
 }
@@ -795,6 +830,7 @@ export function handle_narrow_activated(
 export function handle_message_view_deactivated(): void {
     deselect_stream_items();
     clear_topics();
+    streamClickState.clear();
 }
 
 function focus_stream_filter(e: JQuery.ClickEvent): void {
@@ -918,6 +954,7 @@ export function set_event_handlers({
         const stream_id = stream_id_for_elt($(e.target).parents("li.narrow-filter"));
         const current_narrow_stream_id = narrow_state.stream_id();
         const current_topic = narrow_state.topic();
+        handle_stream_sidebar_click(stream_id, on_stream_click);
 
         if (stream_data.is_empty_topic_only_channel(stream_id)) {
             // If the channel doesn't support topics, take you
